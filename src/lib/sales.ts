@@ -21,6 +21,7 @@ const COLLECTION = "sales_events";
  * | `createdAt`| Date                         |
  * | `source`   | `"coin"` \| `"jcard"`        |
  * | `price`    | number (line total, PHP)     |
+ * | `jcard`    | string (card UID; JCard rows only) |
  *
  * **Legacy** rows may lack `source` / `price` and use older keys; {@link saleLineRevenuePhp}
  * and {@link revenuePerDocExpr} still honor `price_charged`, `amountPhp`, `quantity`×rates,
@@ -32,6 +33,8 @@ export type SalesEventInsertDoc = {
   createdAt: Date;
   source: "coin" | "jcard";
   price: number;
+  /** Card UID from device; only set when {@link source} is `"jcard"`. */
+  jcard?: string;
 };
 
 /** Fields only present on older documents (read when computing revenue / source). */
@@ -253,6 +256,8 @@ export type SalesEventRow = {
   createdAt: Date;
   revenuePhp: number;
   source: "coin" | "jcard";
+  /** Card UID for JCard sales; `null` for coin or legacy rows without id. */
+  jcardId: string | null;
 };
 
 export type RecordSaleOptions = {
@@ -261,8 +266,7 @@ export type RecordSaleOptions = {
 };
 
 /**
- * One successful RFID tap → `sales_events` row (`source: jcard`, `price`).
- * `jcardUid` is not stored; it only selects JCard vs coin behavior for `source`.
+ * One successful RFID tap → `sales_events` row (`source: jcard`, `price`, `jcard`).
  */
 export async function recordRfidTapEvent(jcardUid: string, chargePhp: number) {
   const charge = Math.round(chargePhp);
@@ -305,6 +309,7 @@ export async function recordSale(
     createdAt,
     source: isJcard ? "jcard" : "coin",
     price,
+    ...(isJcard && trimmed ? { jcard: trimmed } : {}),
   };
 
   const result = await coll.insertOne(doc as OptionalUnlessRequiredId<SalesEventDoc>);
@@ -401,12 +406,22 @@ export async function getDashboardStats(
     .limit(12)
     .toArray();
 
-  const recent: SalesEventRow[] = recentDocs.map((d) => ({
-    id: d._id.toHexString(),
-    createdAt: d.createdAt,
-    revenuePhp: saleLineRevenuePhp(d, coinSlotPhp, jcardTapPhp),
-    source: d.source ?? (isJcardSale(d) ? "jcard" : "coin"),
-  }));
+  const recent: SalesEventRow[] = recentDocs.map((d) => {
+    const source = d.source ?? (isJcardSale(d) ? "jcard" : "coin");
+    const jc =
+      typeof d.jcard === "string" && d.jcard.trim() !== ""
+        ? d.jcard.trim()
+        : typeof d.rfid === "string" && d.rfid.trim() !== ""
+          ? d.rfid.trim()
+          : null;
+    return {
+      id: d._id.toHexString(),
+      createdAt: d.createdAt,
+      revenuePhp: saleLineRevenuePhp(d, coinSlotPhp, jcardTapPhp),
+      source: source as "coin" | "jcard",
+      jcardId: source === "jcard" ? jc : null,
+    };
+  });
 
   return {
     totalAllTimePhp,

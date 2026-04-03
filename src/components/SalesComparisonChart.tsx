@@ -41,6 +41,7 @@ export function SalesComparisonChart({ data }: Props) {
             allowDecimals={false}
           />
           <Tooltip
+            cursor={{ fill: "rgba(15, 23, 42, 0.45)" }}
             contentStyle={{
               backgroundColor: "rgba(15, 23, 42, 0.95)",
               border: "1px solid rgba(148, 163, 184, 0.25)",

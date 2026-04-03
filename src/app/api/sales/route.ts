@@ -19,7 +19,7 @@ function parseJcard(body: unknown): string | null {
  * POST JSON (one event per request):
  * - JCard: { "jcard": "<uid>" } (optional legacy keys ignored: count, quantity, sales)
  * - Coin: `{}` or any body without `jcard` / rfid aliases
- * Mongo `sales_events`: `createdAt`, `source`, `price` (+ `_id`).
+ * Mongo `sales_events`: `createdAt`, `source`, `price`, optional `jcard` (+ `_id`).
  */
 export async function POST(req: Request) {
   if (!isCarwashAuthorized(req)) {

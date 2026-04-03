@@ -13,7 +13,7 @@ export const runtime = "nodejs";
  * Deducts the configured tap charge (PHP, default from env or DB) from `balance`
  * for the matching id in MONGODB_CUSTOMERS_DB / MONGODB_CUSTOMERS_COLLECTION
  * (default carwash_vendo.customers). Monetary fields use currency PHP (ISO 4217).
- * On success, appends `sales_events`: `source: "jcard"`, `price` (+ `createdAt`, `_id`).
+ * On success, appends `sales_events`: `source: "jcard"`, `jcard`, `price` (+ `createdAt`, `_id`).
  */
 export async function POST(req: Request) {
   if (!isCarwashAuthorized(req)) {

@@ -239,6 +239,13 @@ export default async function Home({ searchParams }: PageProps) {
                         </span>
                         <span className="text-xs text-slate-400">
                           {isJcard ? "RFID tap" : `Coin slot (${formatPeso(coinSlotPhp)} / unit)`}
+                          {isJcard && row.jcardId ? (
+                            <>
+                              {" "}
+                              <span className="text-slate-500">·</span>{" "}
+                              <span className="font-mono text-sky-300/90">{row.jcardId}</span>
+                            </>
+                          ) : null}
                         </span>
                       </div>
                       <span className="font-mono text-xs text-slate-500">
