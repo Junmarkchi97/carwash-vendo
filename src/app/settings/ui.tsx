@@ -2,17 +2,8 @@
 
 import { formatPhp } from "@/lib/currency";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-
-type SettingsResponse =
-  | {
-      ok: true;
-      jcardTapChargePesos: number;
-      currency?: string;
-      source: "db" | "env";
-      updatedAt: string | null;
-    }
-  | { error: string };
+import { useEffect, useState } from "react";
+import { saveJcardTapChargePesosAction } from "./actions";
 
 function getSavedKey(): string {
   try {
@@ -30,41 +21,29 @@ function saveKey(key: string) {
   }
 }
 
-export function SettingsForm() {
+type SettingsFormProps = {
+  initialJcardTapChargePesos: number;
+  initialCurrency: string;
+  initialSource: "db" | "env";
+  initialUpdatedAt: string | null;
+};
+
+export function SettingsForm({
+  initialJcardTapChargePesos,
+  initialCurrency,
+  initialSource,
+  initialUpdatedAt,
+}: SettingsFormProps) {
   const [apiKey, setApiKey] = useState("");
   const [loading, setLoading] = useState(false);
-  const [charge, setCharge] = useState<string>("4");
+  const [charge, setCharge] = useState(String(initialJcardTapChargePesos));
   const [status, setStatus] = useState<string>("");
-  const [currencyHint, setCurrencyHint] = useState<string>("PHP");
+  const [currencyHint, setCurrencyHint] = useState<string>(initialCurrency);
 
   useEffect(() => {
     const k = getSavedKey();
     if (k) setApiKey(k);
   }, []);
-
-  const headers = useMemo(() => {
-    const h: Record<string, string> = { "content-type": "application/json" };
-    if (apiKey.trim()) h["x-api-key"] = apiKey.trim();
-    return h;
-  }, [apiKey]);
-
-  async function load() {
-    setLoading(true);
-    setStatus("");
-    try {
-      const res = await fetch("/api/admin/settings", { headers, cache: "no-store" });
-      const json = (await res.json()) as SettingsResponse;
-      if (!res.ok || "error" in json) {
-        setStatus(`Load failed: ${"error" in json ? json.error : res.statusText}`);
-        return;
-      }
-      setCharge(String(json.jcardTapChargePesos));
-      if (json.currency) setCurrencyHint(json.currency);
-      setStatus(`Loaded (source: ${json.source}${json.updatedAt ? `, updated: ${json.updatedAt}` : ""})`);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function save() {
     const n = Math.floor(Number(charge));
@@ -75,22 +54,30 @@ export function SettingsForm() {
     setLoading(true);
     setStatus("");
     try {
-      const res = await fetch("/api/admin/settings", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ jcardTapChargePesos: n }),
-      });
-      const json = (await res.json()) as { ok?: boolean; error?: string; currency?: string };
-      if (!res.ok || json.error) {
-        setStatus(`Save failed: ${json.error ?? res.statusText}`);
+      const key = apiKey.trim() || getSavedKey();
+      const result = await saveJcardTapChargePesosAction(key || undefined, n);
+      if (!result.ok) {
+        const hint =
+          result.error === "Unauthorized"
+            ? "Unauthorized — enter the Admin API key above so it matches CARWASH_API_KEY on the server (or set CARWASH_ALLOW_NO_KEY=true when no key is configured)."
+            : result.error;
+        setStatus(`Save failed: ${hint}`);
         return;
       }
-      if (json.currency) setCurrencyHint(json.currency);
-      setStatus(`Saved. New tap charge: ${formatPhp(n)}.`);
+      setCurrencyHint(result.currency);
+      setCharge(String(result.jcardTapChargePesos));
+      setStatus(`Saved. New tap charge: ${formatPhp(result.jcardTapChargePesos)}.`);
     } finally {
       setLoading(false);
     }
   }
+
+  const loadedHint =
+    initialSource === "db" && initialUpdatedAt
+      ? `Loaded from database (updated ${new Date(initialUpdatedAt).toLocaleString()}).`
+      : initialSource === "db"
+        ? "Loaded from database."
+        : "Using env default (no saved row in settings yet); saving will write to MongoDB.";
 
   return (
     <div className="space-y-8">
@@ -112,7 +99,11 @@ export function SettingsForm() {
           <p className="text-xs text-slate-500">
             Stored only in this browser. Devices use the same key in{" "}
             <code className="text-sky-200/80">Authorization</code> or{" "}
-            <code className="text-sky-200/80">X-API-Key</code> for <Link href="/health" className="text-sky-300 underline-offset-2 hover:underline">APIs</Link>.
+            <code className="text-sky-200/80">X-API-Key</code> for{" "}
+            <Link href="/health" className="text-sky-300 underline-offset-2 hover:underline">
+              APIs
+            </Link>
+            .
           </p>
         </div>
       </section>
@@ -125,6 +116,7 @@ export function SettingsForm() {
           </span>
         </div>
         <div className="space-y-3 rounded-xl border border-white/10 bg-black/20 p-4">
+          <p className="text-xs text-slate-500">{loadedHint}</p>
           <div className="space-y-1">
             <label className="text-xs font-medium uppercase tracking-wide text-slate-400">Amount per successful tap</label>
             <input
@@ -139,14 +131,6 @@ export function SettingsForm() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2 pt-1">
-            <button
-              type="button"
-              onClick={load}
-              disabled={loading}
-              className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10 disabled:opacity-50"
-            >
-              Load current
-            </button>
             <button
               type="button"
               onClick={save}

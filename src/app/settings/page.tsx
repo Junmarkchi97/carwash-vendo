@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { CURRENCY_CODE } from "@/lib/currency";
+import { getJcardTapChargePesos } from "@/lib/settings";
 import Link from "next/link";
 import { SettingsForm } from "./ui";
 
@@ -9,7 +11,9 @@ export const metadata: Metadata = {
   description: "JCard tap price (PHP) and admin API access",
 };
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
+  const tap = await getJcardTapChargePesos();
+
   return (
     <main className="min-h-full bg-linear-to-b from-sky-950 via-slate-950 to-slate-950 px-4 py-10 pb-16 text-slate-100">
       <div className="mx-auto max-w-2xl">
@@ -20,7 +24,12 @@ export default function SettingsPage() {
         </p>
 
         <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-6 shadow-lg shadow-black/20">
-          <SettingsForm />
+          <SettingsForm
+            initialJcardTapChargePesos={tap.value}
+            initialCurrency={CURRENCY_CODE}
+            initialSource={tap.source}
+            initialUpdatedAt={tap.updatedAt ? tap.updatedAt.toISOString() : null}
+          />
         </div>
 
         <p className="mt-6 text-xs text-slate-500">

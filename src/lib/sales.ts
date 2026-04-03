@@ -362,6 +362,36 @@ export async function recordSale(
     throw new Error("recordSale: invalid price");
   }
 
+  /**
+   * Same physical tap often hits both `POST /api/jcard/tap` (logs after balance deduct) and
+   * `POST /api/sales` with `jcard` — each path calls `recordSale`, which used to insert twice.
+   * Reuse the recent row instead of inserting again (balance was only deducted once on tap).
+   */
+  if (isJcard && trimmed) {
+    const rawMs = process.env.JCARD_SALES_DEDUPE_MS;
+    const dedupeMs =
+      rawMs === undefined || rawMs === "" ? 4000 : Math.max(0, Number(rawMs));
+    if (Number.isFinite(dedupeMs) && dedupeMs > 0) {
+      const since = new Date(createdAt.getTime() - dedupeMs);
+      const dup = await coll.findOne(
+        {
+          jcard: trimmed,
+          price,
+          createdAt: { $gte: since },
+        },
+        { sort: { createdAt: -1 }, projection: { _id: 1, createdAt: 1 } },
+      );
+      if (dup?._id && dup.createdAt) {
+        return {
+          id: dup._id.toHexString(),
+          createdAt: dup.createdAt,
+          source: "jcard" as const,
+          price,
+        };
+      }
+    }
+  }
+
   const doc: SalesEventInsertDoc = {
     createdAt,
     source: isJcard ? "jcard" : "coin",

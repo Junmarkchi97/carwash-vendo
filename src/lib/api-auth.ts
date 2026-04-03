@@ -3,15 +3,28 @@ export function getConfiguredApiKey(): string | undefined {
   return k && k.length > 0 ? k : undefined;
 }
 
-export function isCarwashAuthorized(req: Request): boolean {
-  const key = getConfiguredApiKey();
-  if (!key) {
-    return process.env.CARWASH_ALLOW_NO_KEY === "true";
-  }
+/** Key sent as `Authorization: Bearer …` or `X-API-Key` (same as device APIs). */
+export function getPresentedApiKeyFromRequest(req: Request): string | undefined {
   const auth = req.headers.get("authorization");
   const xKey = req.headers.get("x-api-key");
   if (auth?.startsWith("Bearer ")) {
-    return auth.slice("Bearer ".length) === key;
+    return auth.slice("Bearer ".length);
   }
-  return xKey === key;
+  return xKey ?? undefined;
+}
+
+/**
+ * Validates the admin/device key. Used by API routes and server actions (e.g. settings save).
+ */
+export function isCarwashKeyValid(presentedKey: string | undefined): boolean {
+  const configured = getConfiguredApiKey();
+  if (!configured) {
+    return process.env.CARWASH_ALLOW_NO_KEY === "true";
+  }
+  const trimmed = presentedKey?.trim();
+  return trimmed === configured;
+}
+
+export function isCarwashAuthorized(req: Request): boolean {
+  return isCarwashKeyValid(getPresentedApiKeyFromRequest(req));
 }
