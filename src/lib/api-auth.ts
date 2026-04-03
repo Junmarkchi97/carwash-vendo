@@ -14,7 +14,7 @@ export function getPresentedApiKeyFromRequest(req: Request): string | undefined 
 }
 
 /**
- * Validates the admin/device key. Used by API routes and server actions (e.g. settings save).
+ * Validates the admin/device key. Used by API routes (and `isSettingsSaveAllowed` when no key is configured).
  */
 export function isCarwashKeyValid(presentedKey: string | undefined): boolean {
   const configured = getConfiguredApiKey();
@@ -27,4 +27,15 @@ export function isCarwashKeyValid(presentedKey: string | undefined): boolean {
 
 export function isCarwashAuthorized(req: Request): boolean {
   return isCarwashKeyValid(getPresentedApiKeyFromRequest(req));
+}
+
+/**
+ * Next.js server actions for `/settings` (no API key in the browser).
+ * If `CARWASH_API_KEY` is set, also set `CARWASH_ALLOW_SETTINGS_WITHOUT_KEY=true` to allow saves from the UI.
+ */
+export function isSettingsSaveAllowed(): boolean {
+  if (process.env.CARWASH_ALLOW_SETTINGS_WITHOUT_KEY === "true") {
+    return true;
+  }
+  return isCarwashKeyValid(undefined);
 }

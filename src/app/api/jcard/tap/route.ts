@@ -3,6 +3,7 @@ import { isCarwashAuthorized } from "@/lib/api-auth";
 import { tapJcardAndCharge } from "@/lib/customers";
 import { CURRENCY_CODE } from "@/lib/currency";
 import { recordRfidTapEvent } from "@/lib/sales";
+import { getJcardTapDurationSeconds } from "@/lib/settings";
 
 export const runtime = "nodejs";
 
@@ -14,6 +15,7 @@ export const runtime = "nodejs";
  * for the matching id in MONGODB_CUSTOMERS_DB / MONGODB_CUSTOMERS_COLLECTION
  * (default carwash_vendo.customers). Monetary fields use currency PHP (ISO 4217).
  * On success, appends `sales_events`: `source: "jcard"`, `jcard`, `price` (+ `createdAt`, `_id`).
+ * Response includes `jcardTapDurationSeconds` and `jcardTapDuration` { minutes, seconds } for wash timers.
  */
 export async function POST(req: Request) {
   if (!isCarwashAuthorized(req)) {
@@ -68,6 +70,12 @@ export async function POST(req: Request) {
   }
 
   if (outcome.ok) {
+    const { value: jcardTapDurationSeconds } = await getJcardTapDurationSeconds();
+    const jcardTapDuration = {
+      minutes: Math.floor(jcardTapDurationSeconds / 60),
+      seconds: jcardTapDurationSeconds % 60,
+    };
+
     // Respond immediately for device UX; sales logging continues after response.
     after(async () => {
       try {
@@ -85,6 +93,8 @@ export async function POST(req: Request) {
       balanceBefore: outcome.balanceBefore,
       balanceAfter: outcome.balanceAfter,
       currency: CURRENCY_CODE,
+      jcardTapDurationSeconds,
+      jcardTapDuration,
       startWash: true,
       approved: true,
       washCreditPhp: outcome.charged,
