@@ -1,11 +1,13 @@
 import { SalesComparisonChart } from "@/components/SalesComparisonChart";
 import { LiveRefresh } from "@/components/LiveRefresh";
 import { formatPeso } from "@/lib/currency";
+import { listCustomers, type CustomerListItem } from "@/lib/customers";
 import { getJcardTapChargePesos } from "@/lib/settings";
 import {
   coinSlotPricePhp,
   getCoinJcardDailyLast7,
   getDashboardStats,
+  getLastJcardUseAtByJcards,
   parseSalesSourceFilter,
   type SalesSourceFilter,
 } from "@/lib/sales";
@@ -62,16 +64,22 @@ export default async function Home({ searchParams }: PageProps) {
     recent: [],
   };
   let comparison: Awaited<ReturnType<typeof getCoinJcardDailyLast7>> = [];
+  let customers: CustomerListItem[] = [];
+  let lastJcardTapByJcard = new Map<string, Date>();
   let jcardTapPhp = 4;
   let dataError: string | null = null;
 
   try {
     const tap = await getJcardTapChargePesos();
     jcardTapPhp = tap.value;
-    [stats, comparison] = await Promise.all([
+    [stats, comparison, customers] = await Promise.all([
       getDashboardStats(sourceFilter, { coinSlotPhp, jcardTapPhp }),
       getCoinJcardDailyLast7(),
+      listCustomers(),
     ]);
+    lastJcardTapByJcard = await getLastJcardUseAtByJcards(
+      customers.map((c) => c.jcard),
+    );
   } catch (err) {
     console.error("Dashboard data load failed", err);
     dataError = "Data is temporarily unavailable (database connection failed).";
@@ -210,6 +218,64 @@ export default async function Home({ searchParams }: PageProps) {
 
         <section className="mt-8 rounded-2xl border border-white/10 bg-white/3 p-6 backdrop-blur">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
+            Customers
+          </h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Name, balance (PHP), JCard UID, joined / created date, and last JCard tap from{" "}
+            <code className="text-slate-400">customers</code> +{" "}
+            <code className="text-slate-400">sales_events</code>.
+          </p>
+          {customers.length === 0 ? (
+            <p className="mt-4 text-sm text-slate-500">No customers found.</p>
+          ) : (
+            <ul className="mt-4 divide-y divide-white/10">
+              {customers.map((c) => (
+                <li
+                  key={c.jcard}
+                  className="flex flex-col gap-2 py-3 text-sm first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+                >
+                  <div className="min-w-0 flex flex-col gap-0.5">
+                    <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-3">
+                      <span className="font-medium text-slate-200">
+                        {c.name ?? (
+                          <span className="text-slate-500">(no name)</span>
+                        )}
+                      </span>
+                      <span className="shrink-0 font-mono text-xs text-sky-300/90">{c.jcard}</span>
+                    </div>
+                    <div className="flex flex-col gap-0.5 text-xs text-slate-500">
+                      {c.joinedAt ? (
+                        <span>
+                          Joined {c.joinedAt.toLocaleDateString(undefined, { dateStyle: "medium" })}
+                        </span>
+                      ) : null}
+                      {(() => {
+                        const lastTap = lastJcardTapByJcard.get(c.jcard);
+                        return lastTap ? (
+                          <span>
+                            Last tap{" "}
+                            {lastTap.toLocaleString(undefined, {
+                              dateStyle: "medium",
+                              timeStyle: "short",
+                            })}
+                          </span>
+                        ) : (
+                          <span className="text-slate-600">No JCard taps recorded</span>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                  <span className="shrink-0 tabular-nums text-emerald-200/90">
+                    {formatPeso(c.balancePhp)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="mt-8 rounded-2xl border border-white/10 bg-white/3 p-6 backdrop-blur">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
             {labels.recent}
           </h2>
           {stats.recent.length === 0 ? (
@@ -243,7 +309,44 @@ export default async function Home({ searchParams }: PageProps) {
                             <>
                               {" "}
                               <span className="text-slate-500">·</span>{" "}
+                              {row.customerName ? (
+                                <>
+                                  <span className="text-slate-200">{row.customerName}</span>
+                                  <span className="text-slate-500"> · </span>
+                                </>
+                              ) : null}
                               <span className="font-mono text-sky-300/90">{row.jcardId}</span>
+                              {row.customerBalancePhp != null ? (
+                                <>
+                                  <span className="text-slate-500"> · </span>
+                                  <span className="text-emerald-300/90">
+                                    bal {formatPeso(row.customerBalancePhp)}
+                                  </span>
+                                </>
+                              ) : null}
+                              {row.customerJoinedAt ? (
+                                <>
+                                  <span className="text-slate-500"> · </span>
+                                  <span className="text-slate-500">
+                                    joined{" "}
+                                    {row.customerJoinedAt.toLocaleDateString(undefined, {
+                                      dateStyle: "medium",
+                                    })}
+                                  </span>
+                                </>
+                              ) : null}
+                              {row.customerLastJcardUseAt ? (
+                                <>
+                                  <span className="text-slate-500"> · </span>
+                                  <span className="text-slate-500">
+                                    last tap{" "}
+                                    {row.customerLastJcardUseAt.toLocaleString(undefined, {
+                                      dateStyle: "medium",
+                                      timeStyle: "short",
+                                    })}
+                                  </span>
+                                </>
+                              ) : null}
                             </>
                           ) : null}
                         </span>

@@ -1,4 +1,5 @@
 import type { Collection, Document, Filter, ObjectId, OptionalUnlessRequiredId } from "mongodb";
+import { getCustomerDetailsByJcards } from "./customers";
 import { getDb } from "./db";
 import { getJcardTapChargePesos } from "./settings";
 
@@ -221,6 +222,54 @@ async function getSalesCollection(): Promise<Collection<SalesEventDoc>> {
   return coll;
 }
 
+/**
+ * Latest JCard tap time per card UID from `sales_events` (canonical `jcard` or legacy `rfid`).
+ */
+export async function getLastJcardUseAtByJcards(
+  jcards: string[],
+): Promise<Map<string, Date>> {
+  const uniq = [...new Set(jcards.map((j) => j.trim()).filter(Boolean))];
+  const map = new Map<string, Date>();
+  if (uniq.length === 0) return map;
+
+  const coll = await getSalesCollection();
+  const jcardOnly = salesSourceMongoFilter("jcard");
+  if (!jcardOnly) return map;
+
+  const pipeline: Document[] = [
+    { $match: jcardOnly },
+    {
+      $addFields: {
+        cardUid: {
+          $trim: {
+            input: {
+              $cond: [
+                { $gt: [{ $strLenCP: { $ifNull: ["$jcard", ""] } }, 0] },
+                { $ifNull: ["$jcard", ""] },
+                { $ifNull: ["$rfid", ""] },
+              ],
+            },
+          },
+        },
+      },
+    },
+    { $match: { cardUid: { $in: uniq } } },
+    { $group: { _id: "$cardUid", lastUsedAt: { $max: "$createdAt" } } },
+  ];
+
+  const rows = await coll
+    .aggregate<{ _id: string; lastUsedAt: Date }>(pipeline as never)
+    .toArray();
+
+  for (const row of rows) {
+    const id = typeof row._id === "string" ? row._id.trim() : String(row._id);
+    const t = row.lastUsedAt;
+    if (!id || !(t instanceof Date) || Number.isNaN(t.getTime())) continue;
+    map.set(id, t);
+  }
+  return map;
+}
+
 function localDayBounds(): { start: Date; end: Date } {
   const now = new Date();
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -258,6 +307,14 @@ export type SalesEventRow = {
   source: "coin" | "jcard";
   /** Card UID for JCard sales; `null` for coin or legacy rows without id. */
   jcardId: string | null;
+  /** From customers collection when `jcardId` matches. */
+  customerName: string | null;
+  /** Current stored balance (PHP) when customer doc exists; not historical at sale time. */
+  customerBalancePhp: number | null;
+  /** Customer record created/joined date when known (from fields or `_id`). */
+  customerJoinedAt: Date | null;
+  /** Most recent JCard tap in `sales_events` for this card (any time). */
+  customerLastJcardUseAt: Date | null;
 };
 
 export type RecordSaleOptions = {
@@ -406,7 +463,7 @@ export async function getDashboardStats(
     .limit(12)
     .toArray();
 
-  const recent: SalesEventRow[] = recentDocs.map((d) => {
+  const recentBase = recentDocs.map((d) => {
     const source = d.source ?? (isJcardSale(d) ? "jcard" : "coin");
     const jc =
       typeof d.jcard === "string" && d.jcard.trim() !== ""
@@ -420,6 +477,26 @@ export async function getDashboardStats(
       revenuePhp: saleLineRevenuePhp(d, coinSlotPhp, jcardTapPhp),
       source: source as "coin" | "jcard",
       jcardId: source === "jcard" ? jc : null,
+    };
+  });
+
+  const jcardsForDetails = recentBase
+    .map((r) => r.jcardId)
+    .filter((jc): jc is string => jc != null);
+  const [detailsByJcard, lastUseByJcard] = await Promise.all([
+    getCustomerDetailsByJcards(jcardsForDetails),
+    getLastJcardUseAtByJcards(jcardsForDetails),
+  ]);
+
+  const recent: SalesEventRow[] = recentBase.map((r) => {
+    const d = r.jcardId ? detailsByJcard.get(r.jcardId) : undefined;
+    const lastUse = r.jcardId ? lastUseByJcard.get(r.jcardId) : undefined;
+    return {
+      ...r,
+      customerName: d?.name ?? null,
+      customerBalancePhp: d !== undefined ? d.balancePhp : null,
+      customerJoinedAt: d !== undefined ? d.joinedAt : null,
+      customerLastJcardUseAt: lastUse ?? null,
     };
   });
 
