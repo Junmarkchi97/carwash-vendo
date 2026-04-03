@@ -1,19 +1,69 @@
-import type { Collection, Filter, ObjectId, OptionalUnlessRequiredId } from "mongodb";
+import type { Collection, Document, Filter, ObjectId, OptionalUnlessRequiredId } from "mongodb";
 import { getDb } from "./db";
+import { getJcardTapChargePesos } from "./settings";
+
+/** One coin-slot unit in sales_events is this many PHP (vendo physical slot). */
+export function coinSlotPricePhp(): number {
+  const raw = process.env.COIN_SLOT_PRICE_PHP;
+  const n = raw !== undefined ? Number(raw) : 5;
+  return Number.isFinite(n) && n > 0 ? n : 5;
+}
 
 const COLLECTION = "sales_events";
 
-type SalesEventDoc = {
+/**
+ * MongoDB collection `sales_events` (see `getDb()` for database name).
+ *
+ * **Canonical document** (every insert from this app):
+ * | Field       | Type                         |
+ * |------------|------------------------------|
+ * | `_id`      | ObjectId                     |
+ * | `createdAt`| Date                         |
+ * | `source`   | `"coin"` \| `"jcard"`        |
+ * | `price`    | number (line total, PHP)     |
+ *
+ * **Legacy** rows may lack `source` / `price` and use older keys; {@link saleLineRevenuePhp}
+ * and {@link revenuePerDocExpr} still honor `price_charged`, `amountPhp`, `quantity`×rates,
+ * and `jcard` / `rfid` for classification and totals.
+ */
+
+/** Shape written by {@link recordSale} / {@link recordRfidTapEvent} (Mongo adds `_id`). */
+export type SalesEventInsertDoc = {
+  createdAt: Date;
+  source: "coin" | "jcard";
+  price: number;
+};
+
+/** Fields only present on older documents (read when computing revenue / source). */
+export type SalesEventLegacyFields = {
+  /** Superseded by `price`; still read for existing documents. */
+  price_charged?: number;
+  quantity?: number;
+  amountPhp?: number;
+  jcard?: string;
+  rfid?: string;
+};
+
+/** Document as loaded from Mongo (canonical + optional legacy). */
+export type SalesEventDoc = {
   _id: ObjectId;
   createdAt: Date;
-  quantity: number;
-  /** JCard UID when the sale is from a tap. */
-  jcard?: string;
-  /** @deprecated Legacy field; still read for older rows. */
-  rfid?: string;
-  /** Set for ₱5 coin slot when there is no JCard. */
-  source?: "coin";
-};
+  source?: "coin" | "jcard";
+  /** Line total PHP when present (all new rows). */
+  price?: number;
+} & SalesEventLegacyFields;
+
+/** Projection for queries that only need fields used by {@link saleLineRevenuePhp} and {@link isJcardSale}. */
+const SALES_EVENT_READ_PROJECTION = {
+  createdAt: 1,
+  source: 1,
+  price: 1,
+  price_charged: 1,
+  quantity: 1,
+  amountPhp: 1,
+  jcard: 1,
+  rfid: 1,
+} as const;
 
 export type SalesSourceFilter = "all" | "coin" | "jcard";
 
@@ -23,8 +73,10 @@ export function parseSalesSourceFilter(raw: string | undefined): SalesSourceFilt
   return "all";
 }
 
-/** True when this row is a JCard sale (non-empty jcard, or legacy rfid). */
-export function isJcardSale(doc: Pick<SalesEventDoc, "jcard" | "rfid">): boolean {
+/** JCard row: explicit `source`, or legacy doc with jcard/rfid uid. */
+export function isJcardSale(doc: Pick<SalesEventDoc, "source" | "jcard" | "rfid">): boolean {
+  if (doc.source === "jcard") return true;
+  if (doc.source === "coin") return false;
   const j = typeof doc.jcard === "string" && doc.jcard.trim() !== "";
   if (j) return true;
   return typeof doc.rfid === "string" && doc.rfid.trim() !== "";
@@ -35,8 +87,18 @@ function salesSourceMongoFilter(filter: SalesSourceFilter): Filter<SalesEventDoc
   if (filter === "jcard") {
     return {
       $or: [
-        { jcard: { $exists: true, $nin: [null, ""] } },
-        { rfid: { $exists: true, $nin: [null, ""] } },
+        { source: "jcard" as const },
+        {
+          $and: [
+            { $or: [{ source: { $exists: false } }, { source: null }] },
+            {
+              $or: [
+                { jcard: { $exists: true, $nin: [null, ""] } },
+                { rfid: { $exists: true, $nin: [null, ""] } },
+              ],
+            },
+          ],
+        },
       ],
     } as Filter<SalesEventDoc>;
   }
@@ -45,6 +107,7 @@ function salesSourceMongoFilter(filter: SalesSourceFilter): Filter<SalesEventDoc
       { source: "coin" as const },
       {
         $and: [
+          { $or: [{ source: { $exists: false } }, { source: null }] },
           { $or: [{ jcard: { $exists: false } }, { jcard: null }, { jcard: "" }] },
           { $or: [{ rfid: { $exists: false } }, { rfid: null }, { rfid: "" }] },
         ],
@@ -64,6 +127,82 @@ function matchWithSource(
   return { $and: [base, src] };
 }
 
+function isJcardExpr(): Document {
+  return {
+    $or: [
+      { $eq: ["$source", "jcard"] },
+      { $gt: [{ $strLenCP: { $ifNull: ["$jcard", ""] } }, 0] },
+      { $gt: [{ $strLenCP: { $ifNull: ["$rfid", ""] } }, 0] },
+    ],
+  };
+}
+
+/** Revenue in PHP: `price`, else legacy `price_charged` / `amountPhp`, else `quantity`×rates. */
+export function saleLineRevenuePhp(
+  doc: SalesEventDoc,
+  coinPhp: number,
+  jcardTapPhp: number,
+): number {
+  const p = doc.price;
+  if (typeof p === "number" && Number.isFinite(p) && p >= 0) {
+    return p;
+  }
+  const pc = doc.price_charged;
+  if (typeof pc === "number" && Number.isFinite(pc) && pc >= 0) {
+    return pc;
+  }
+  const legacy =
+    typeof doc.amountPhp === "number" && Number.isFinite(doc.amountPhp) && doc.amountPhp >= 0
+      ? doc.amountPhp
+      : undefined;
+  if (legacy !== undefined) return legacy;
+  const q = doc.quantity ?? 0;
+  if (isJcardSale(doc)) {
+    return q * jcardTapPhp;
+  }
+  return q * coinPhp;
+}
+
+/** Aggregation mirror of {@link saleLineRevenuePhp} (same field precedence). */
+function revenuePerDocExpr(coinSlotPhp: number, jcardTapPhp: number): Document {
+  return {
+    $ifNull: [
+      "$price",
+      {
+        $ifNull: [
+          "$price_charged",
+          {
+            $ifNull: [
+              "$amountPhp",
+              {
+                $multiply: [
+                  { $ifNull: ["$quantity", 0] },
+                  { $cond: [isJcardExpr(), jcardTapPhp, coinSlotPhp] },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+async function aggregateTotalPhp(
+  coll: Collection<SalesEventDoc>,
+  match: Filter<SalesEventDoc>,
+  coinSlotPhp: number,
+  jcardTapPhp: number,
+): Promise<number> {
+  const pipeline: Document[] = [
+    { $match: match },
+    { $addFields: { _rev: revenuePerDocExpr(coinSlotPhp, jcardTapPhp) } },
+    { $group: { _id: null, total: { $sum: "$_rev" } } },
+  ];
+  const [row] = await coll.aggregate<{ total: number }>(pipeline as never).toArray();
+  return row?.total ?? 0;
+}
+
 let indexesEnsured: Promise<void> | null = null;
 
 async function getSalesCollection(): Promise<Collection<SalesEventDoc>> {
@@ -72,7 +211,7 @@ async function getSalesCollection(): Promise<Collection<SalesEventDoc>> {
   if (!indexesEnsured) {
     indexesEnsured = Promise.all([
       coll.createIndex({ createdAt: -1 }),
-      coll.createIndex({ jcard: 1, createdAt: -1 }),
+      coll.createIndex({ source: 1, createdAt: -1 }),
     ]).then(() => {});
   }
   await indexesEnsured;
@@ -112,35 +251,68 @@ export function getLast7LocalDayKeys(): string[] {
 export type SalesEventRow = {
   id: string;
   createdAt: Date;
-  quantity: number;
-  /** Resolved UID (jcard or legacy rfid) for display. */
-  jcard?: string;
-  source?: "coin";
+  revenuePhp: number;
+  source: "coin" | "jcard";
 };
 
-function rowCardUid(d: SalesEventDoc): string | undefined {
-  const j = typeof d.jcard === "string" ? d.jcard.trim() : "";
-  if (j) return j;
-  const r = typeof d.rfid === "string" ? d.rfid.trim() : "";
-  return r || undefined;
+export type RecordSaleOptions = {
+  /** Line total PHP (e.g. RFID tap charge). Overrides computed total. */
+  price?: number;
+};
+
+/**
+ * One successful RFID tap → `sales_events` row (`source: jcard`, `price`).
+ * `jcardUid` is not stored; it only selects JCard vs coin behavior for `source`.
+ */
+export async function recordRfidTapEvent(jcardUid: string, chargePhp: number) {
+  const charge = Math.round(chargePhp);
+  if (!Number.isFinite(charge) || charge < 1) {
+    throw new Error("recordRfidTapEvent: chargePhp must be a positive integer (PHP)");
+  }
+  return recordSale(jcardUid, { price: charge });
 }
 
+/** One sale event (one tap or one coin-slot unit). */
 export async function recordSale(
-  quantity: number,
   jcard?: string | null,
-): Promise<{ id: string; createdAt: Date; source: "jcard" | "coin" }> {
+  options?: RecordSaleOptions,
+): Promise<{
+  id: string;
+  createdAt: Date;
+  source: "jcard" | "coin";
+  price: number;
+}> {
   const coll = await getSalesCollection();
   const createdAt = new Date();
   const trimmed = jcard?.trim();
-  const result = await coll.insertOne(
-    (trimmed
-      ? { createdAt, quantity, jcard: trimmed }
-      : { createdAt, quantity, source: "coin" as const }) as OptionalUnlessRequiredId<SalesEventDoc>,
-  );
+  const isJcard = Boolean(trimmed);
+
+  let price: number;
+  if (options?.price != null && Number.isFinite(options.price)) {
+    price = Math.round(options.price);
+  } else if (isJcard) {
+    const { value } = await getJcardTapChargePesos();
+    price = Math.round(value);
+  } else {
+    price = Math.round(coinSlotPricePhp());
+  }
+
+  if (!Number.isFinite(price) || price < 0) {
+    throw new Error("recordSale: invalid price");
+  }
+
+  const doc: SalesEventInsertDoc = {
+    createdAt,
+    source: isJcard ? "jcard" : "coin",
+    price,
+  };
+
+  const result = await coll.insertOne(doc as OptionalUnlessRequiredId<SalesEventDoc>);
   return {
     id: result.insertedId.toHexString(),
     createdAt,
-    source: trimmed ? "jcard" : "coin",
+    source: doc.source,
+    price,
   };
 }
 
@@ -167,20 +339,24 @@ export async function getCoinJcardDailyLast7(): Promise<CoinJcardDayRow[]> {
 
   const docs = await coll
     .find({ createdAt: { $gte: weekStart } })
-    .project({ quantity: 1, createdAt: 1, jcard: 1, rfid: 1, source: 1 })
+    .project(SALES_EVENT_READ_PROJECTION)
     .toArray();
 
   const dayKeys = getLast7LocalDayKeys();
   const coinByDay = new Map<string, number>();
   const jcardByDay = new Map<string, number>();
 
+  const coinSlot = coinSlotPricePhp();
+  const { value: jcardTap } = await getJcardTapChargePesos();
+
   for (const row of docs) {
-    const key = localDateKey(row.createdAt);
-    const q = row.quantity;
-    if (isJcardSale(row)) {
-      jcardByDay.set(key, (jcardByDay.get(key) ?? 0) + q);
+    const doc = row as SalesEventDoc;
+    const key = localDateKey(doc.createdAt);
+    const rev = saleLineRevenuePhp(doc, coinSlot, jcardTap);
+    if (isJcardSale(doc)) {
+      jcardByDay.set(key, (jcardByDay.get(key) ?? 0) + rev);
     } else {
-      coinByDay.set(key, (coinByDay.get(key) ?? 0) + q);
+      coinByDay.set(key, (coinByDay.get(key) ?? 0) + rev);
     }
   }
 
@@ -198,8 +374,12 @@ export async function getCoinJcardDailyLast7(): Promise<CoinJcardDayRow[]> {
   });
 }
 
-export async function getDashboardStats(sourceFilter: SalesSourceFilter = "all") {
+export async function getDashboardStats(
+  sourceFilter: SalesSourceFilter = "all",
+  pricing: { coinSlotPhp: number; jcardTapPhp: number },
+) {
   const coll = await getSalesCollection();
+  const { coinSlotPhp, jcardTapPhp } = pricing;
 
   const { start: todayStart, end: todayEnd } = localDayBounds();
   const weekAgo = new Date();
@@ -208,31 +388,12 @@ export async function getDashboardStats(sourceFilter: SalesSourceFilter = "all")
   const baseToday: Filter<SalesEventDoc> = { createdAt: { $gte: todayStart, $lt: todayEnd } };
   const baseWeek: Filter<SalesEventDoc> = { createdAt: { $gte: weekAgo } };
 
-  const matchTotal = matchWithSource(sourceFilter, {} as Filter<SalesEventDoc>);
-  const totalPipeline =
-    Object.keys(matchTotal as object).length > 0
-      ? [{ $match: matchTotal }, { $group: { _id: null as null, n: { $sum: "$quantity" } } }]
-      : [{ $group: { _id: null as null, n: { $sum: "$quantity" } } }];
-
-  const [totalAgg, todayAgg, weekAgg] = await Promise.all([
-    coll.aggregate<{ n: number }>(totalPipeline as never).toArray(),
-    coll
-      .aggregate<{ n: number }>([
-        { $match: matchWithSource(sourceFilter, baseToday) },
-        { $group: { _id: null, n: { $sum: "$quantity" } } },
-      ])
-      .toArray(),
-    coll
-      .aggregate<{ n: number }>([
-        { $match: matchWithSource(sourceFilter, baseWeek) },
-        { $group: { _id: null, n: { $sum: "$quantity" } } },
-      ])
-      .toArray(),
+  const matchAll = matchWithSource(sourceFilter, {} as Filter<SalesEventDoc>);
+  const [totalAllTimePhp, totalTodayPhp, totalLast7DaysPhp] = await Promise.all([
+    aggregateTotalPhp(coll, matchAll, coinSlotPhp, jcardTapPhp),
+    aggregateTotalPhp(coll, matchWithSource(sourceFilter, baseToday), coinSlotPhp, jcardTapPhp),
+    aggregateTotalPhp(coll, matchWithSource(sourceFilter, baseWeek), coinSlotPhp, jcardTapPhp),
   ]);
-
-  const totalAllTime = totalAgg[0]?.n ?? 0;
-  const totalToday = todayAgg[0]?.n ?? 0;
-  const totalLast7Days = weekAgg[0]?.n ?? 0;
 
   const recentDocs = await coll
     .find(matchWithSource(sourceFilter, {}))
@@ -243,15 +404,14 @@ export async function getDashboardStats(sourceFilter: SalesSourceFilter = "all")
   const recent: SalesEventRow[] = recentDocs.map((d) => ({
     id: d._id.toHexString(),
     createdAt: d.createdAt,
-    quantity: d.quantity,
-    jcard: rowCardUid(d),
-    source: d.source,
+    revenuePhp: saleLineRevenuePhp(d, coinSlotPhp, jcardTapPhp),
+    source: d.source ?? (isJcardSale(d) ? "jcard" : "coin"),
   }));
 
   return {
-    totalAllTime,
-    totalToday,
-    totalLast7Days,
+    totalAllTimePhp,
+    totalTodayPhp,
+    totalLast7DaysPhp,
     recent,
   };
 }

@@ -30,7 +30,7 @@ export async function getDb(): Promise<Db> {
   return client.db(name);
 }
 
-/** Named database on the same cluster (e.g. `carwash` for `customers`). */
+/** Named database on the same cluster (e.g. `carwash_vendo` for `customers`). */
 export async function getDatabase(dbName: string): Promise<Db> {
   const client = await getMongoClientPromise();
   return client.db(dbName);

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { isCarwashAuthorized } from "@/lib/api-auth";
 import { tapJcardAndCharge } from "@/lib/customers";
+import { CURRENCY_CODE } from "@/lib/currency";
+import { recordRfidTapEvent } from "@/lib/sales";
 
 export const runtime = "nodejs";
 
@@ -8,8 +10,10 @@ export const runtime = "nodejs";
  * POST JSON { "jcard": "<card uid>" } — aliases: rfid, uid, cardId, id
  * Same auth as /api/sales: Authorization: Bearer <CARWASH_API_KEY> or X-API-Key.
  *
- * Deducts JCARD_TAP_CHARGE_PESOS (default 4) from `balance` for the matching id
- * in MONGODB_CUSTOMERS_DB / MONGODB_CUSTOMERS_COLLECTION (default carwash.customers).
+ * Deducts the configured tap charge (PHP, default from env or DB) from `balance`
+ * for the matching id in MONGODB_CUSTOMERS_DB / MONGODB_CUSTOMERS_COLLECTION
+ * (default carwash_vendo.customers). Monetary fields use currency PHP (ISO 4217).
+ * On success, appends `sales_events`: `source: "jcard"`, `price` (+ `createdAt`, `_id`).
  */
 export async function POST(req: Request) {
   if (!isCarwashAuthorized(req)) {
@@ -56,18 +60,33 @@ export async function POST(req: Request) {
         error: "Insufficient balance",
         jcard: jcard.trim(),
         balance: outcome.balance,
+        currency: CURRENCY_CODE,
       },
       { status: 402 },
     );
   }
 
   if (outcome.ok) {
+    let saleId: string | undefined;
+    let salesEventError: string | undefined;
+    try {
+      const sale = await recordRfidTapEvent(outcome.jcard, outcome.charged);
+      saleId = sale.id;
+    } catch (err) {
+      salesEventError = err instanceof Error ? err.message : String(err);
+      console.error("jcard/tap: failed to write sales_events", err);
+    }
+
     return NextResponse.json({
       ok: true,
       jcard: outcome.jcard,
       charged: outcome.charged,
+      price: outcome.charged,
       balanceBefore: outcome.balanceBefore,
       balanceAfter: outcome.balanceAfter,
+      currency: CURRENCY_CODE,
+      salesEventId: saleId ?? null,
+      ...(salesEventError ? { salesEventError } : {}),
     });
   }
 

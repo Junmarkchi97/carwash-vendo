@@ -1,7 +1,8 @@
 import type { Collection, Document } from "mongodb";
 import { getDatabase } from "./db";
+import { getJcardTapChargePesos } from "./settings";
 
-const DEFAULT_CUSTOMERS_DB = "carwash";
+const DEFAULT_CUSTOMERS_DB = "carwash_vendo";
 const DEFAULT_COLLECTION = "customers";
 
 function customersDbName(): string {
@@ -22,13 +23,6 @@ function jcardField(): string {
 
 function balanceField(): string {
   return process.env.CUSTOMERS_BALANCE_FIELD || "balance";
-}
-
-export function tapChargePesos(): number {
-  const raw =
-    process.env.JCARD_TAP_CHARGE_PESOS ?? process.env.RFID_TAP_CHARGE_PESOS;
-  const n = raw !== undefined ? Number(raw) : 4;
-  return Number.isFinite(n) && n > 0 ? n : 4;
 }
 
 let indexesEnsured: Promise<string> | null = null;
@@ -66,8 +60,8 @@ function readBalance(doc: Document, balanceKey: string): number {
 }
 
 /**
- * Looks up a customer by JCard id and atomically deducts the tap charge (default ₱4)
- * if balance is sufficient. Uses `carwash` DB + `customers` collection by default.
+ * Looks up a customer by JCard id and atomically deducts the tap charge in PHP (default 4)
+ * if balance is sufficient. Uses `carwash_vendo` DB + `customers` collection by default.
  */
 export async function tapJcardAndCharge(jcardRaw: string): Promise<TapOutcome> {
   const jcard = jcardRaw.trim();
@@ -75,7 +69,7 @@ export async function tapJcardAndCharge(jcardRaw: string): Promise<TapOutcome> {
     return { ok: false, error: "not_found" };
   }
 
-  const charge = tapChargePesos();
+  const { value: charge } = await getJcardTapChargePesos();
   const jcardKey = jcardField();
   const balanceKey = balanceField();
 

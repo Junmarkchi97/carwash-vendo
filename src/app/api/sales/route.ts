@@ -1,23 +1,9 @@
 import { NextResponse } from "next/server";
 import { isCarwashAuthorized } from "@/lib/api-auth";
+import { CURRENCY_CODE } from "@/lib/currency";
 import { recordSale } from "@/lib/sales";
 
 export const runtime = "nodejs";
-
-function parseQuantity(body: unknown): number | null {
-  if (!body || typeof body !== "object") return null;
-  const o = body as Record<string, unknown>;
-  const raw = o.count ?? o.quantity ?? o.sales;
-  if (typeof raw === "number" && Number.isFinite(raw)) {
-    const n = Math.floor(raw);
-    return n > 0 ? n : null;
-  }
-  if (typeof raw === "string" && raw.trim() !== "") {
-    const n = Math.floor(Number(raw));
-    return Number.isFinite(n) && n > 0 ? n : null;
-  }
-  return null;
-}
 
 /** Primary key `jcard`; legacy aliases `rfid`, `uid`, `cardId`. */
 function parseJcard(body: unknown): string | null {
@@ -30,10 +16,10 @@ function parseJcard(body: unknown): string | null {
 }
 
 /**
- * POST JSON:
- * - JCard: { "jcard": "<uid>", "count": 1 } (aliases: rfid, uid, cardId)
- * - Coin slot: { "count": 1 } or { "count": 1, "source": "coin" }
- * Headers: Authorization: Bearer <CARWASH_API_KEY> or X-API-Key.
+ * POST JSON (one event per request):
+ * - JCard: { "jcard": "<uid>" } (optional legacy keys ignored: count, quantity, sales)
+ * - Coin: `{}` or any body without `jcard` / rfid aliases
+ * Mongo `sales_events`: `createdAt`, `source`, `price` (+ `_id`).
  */
 export async function POST(req: Request) {
   if (!isCarwashAuthorized(req)) {
@@ -53,27 +39,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const quantity = parseQuantity(json);
-  if (quantity === null) {
-    return NextResponse.json(
-      {
-        error:
-          'Expected a positive integer in "count", "quantity", or "sales".',
-      },
-      { status: 400 },
-    );
-  }
-
   const jcard = parseJcard(json);
-  const { id, createdAt, source } = await recordSale(quantity, jcard);
+  const { id, createdAt, source, price } = await recordSale(jcard);
 
   if (source === "jcard") {
     return NextResponse.json({
       ok: true,
       id,
-      quantity,
       source: "jcard",
       jcard,
+      price,
+      currency: CURRENCY_CODE,
       time: createdAt.toISOString(),
     });
   }
@@ -81,8 +57,9 @@ export async function POST(req: Request) {
   return NextResponse.json({
     ok: true,
     id,
-    quantity,
     source: "coin",
+    price,
+    currency: CURRENCY_CODE,
     time: createdAt.toISOString(),
   });
 }

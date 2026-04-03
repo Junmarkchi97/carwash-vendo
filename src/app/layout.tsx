@@ -1,3 +1,4 @@
+import { AppNav } from "@/components/AppNav";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
@@ -13,8 +14,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "JEYS CARWASH — Sales",
-  description: "Sales dashboard for JEYS CARWASH vendo",
+  title: {
+    default: "Sales — JEYS CARWASH",
+    template: "%s — JEYS CARWASH",
+  },
+  description: "Sales dashboard and vendo settings for JEYS CARWASH",
 };
 
 export default function RootLayout({
@@ -27,7 +31,10 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="flex min-h-full flex-col bg-slate-950">
+        <AppNav />
+        <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+      </body>
     </html>
   );
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { formatPeso } from "@/lib/currency";
 import type { CoinJcardDayRow } from "@/lib/sales";
 import {
   Bar,
@@ -49,9 +50,9 @@ export function SalesComparisonChart({ data }: Props) {
             labelStyle={{ color: "#e2e8f0" }}
             formatter={(value, name) => {
               const n = typeof value === "number" ? value : Number(value);
-              const label =
-                name === "coin" ? "Coin slot (units)" : "JCard (units)";
-              return [Number.isFinite(n) ? n : 0, label];
+              const v = Number.isFinite(n) ? n : 0;
+              const label = name === "coin" ? "Coin slot" : "JCard";
+              return [formatPeso(v), label];
             }}
             labelFormatter={(_, payload) => {
               const row = payload?.[0]?.payload as CoinJcardDayRow | undefined;
