@@ -5,7 +5,7 @@ import { listCustomers } from "@/lib/customers";
 export const runtime = "nodejs";
 
 /**
- * GET — `jcard` + `balance` only (ESP32 sync). No name or timestamps.
+ * GET — `jcard`, `balance`, and `name` (ESP32 sync). No timestamps.
  * Data source: MongoDB `MONGODB_CUSTOMERS_DB` / `MONGODB_CUSTOMERS_COLLECTION`
  * (default `carwash_vendo.customers`). Same auth as `/api/jcard/tap` and `/api/sales`:
  * `Authorization: Bearer <CARWASH_API_KEY>` or `X-API-Key`.
@@ -28,6 +28,7 @@ export async function GET(req: Request) {
     customers: customers.map((c) => ({
       jcard: c.jcard,
       balance: c.balancePhp,
+      name: c.name,
     })),
   });
 }
