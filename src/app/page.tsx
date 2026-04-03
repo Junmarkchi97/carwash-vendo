@@ -50,10 +50,24 @@ function statLabels(f: SalesSourceFilter) {
 export default async function Home({ searchParams }: PageProps) {
   const sp = await searchParams;
   const sourceFilter = parseSalesSourceFilter(sp.source);
-  const [stats, comparison] = await Promise.all([
-    getDashboardStats(sourceFilter),
-    getCoinJcardDailyLast7(),
-  ]);
+  let stats: Awaited<ReturnType<typeof getDashboardStats>> = {
+    totalAllTime: 0,
+    totalToday: 0,
+    totalLast7Days: 0,
+    recent: [],
+  };
+  let comparison: Awaited<ReturnType<typeof getCoinJcardDailyLast7>> = [];
+  let dataError: string | null = null;
+
+  try {
+    [stats, comparison] = await Promise.all([
+      getDashboardStats(sourceFilter),
+      getCoinJcardDailyLast7(),
+    ]);
+  } catch (err) {
+    console.error("Dashboard data load failed", err);
+    dataError = "Data is temporarily unavailable (database connection failed).";
+  }
 
   const labels = statLabels(sourceFilter);
   const sumCoin7 = comparison.reduce((s, r) => s + r.coin, 0);
@@ -93,6 +107,19 @@ export default async function Home({ searchParams }: PageProps) {
             </Link>
           </nav>
         </section>
+
+        {dataError ? (
+          <p className="mb-6 rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+            {dataError}{" "}
+            <span className="text-amber-200/80">
+              You can still verify the API health via{" "}
+              <code className="rounded bg-white/10 px-1.5 py-0.5 text-xs text-amber-100">
+                /api/sales
+              </code>
+              .
+            </span>
+          </p>
+        ) : null}
 
         <p className="mb-6 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
           <span className="text-amber-400/90">Coin (last 7 days):</span>{" "}
