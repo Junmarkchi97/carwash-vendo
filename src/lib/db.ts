@@ -22,3 +22,9 @@ export async function getDb(): Promise<Db> {
   const name = process.env.MONGODB_DB || "carwash_vendo";
   return client.db(name);
 }
+
+/** Named database on the same cluster (e.g. `carwash` for `customers`). */
+export async function getDatabase(dbName: string): Promise<Db> {
+  const client = await getMongoClientPromise();
+  return client.db(dbName);
+}

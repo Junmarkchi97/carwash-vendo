@@ -1,25 +1,8 @@
 import { NextResponse } from "next/server";
+import { isCarwashAuthorized } from "@/lib/api-auth";
 import { recordSale } from "@/lib/sales";
 
 export const runtime = "nodejs";
-
-function getConfiguredApiKey(): string | undefined {
-  const k = process.env.CARWASH_API_KEY;
-  return k && k.length > 0 ? k : undefined;
-}
-
-function isAuthorized(req: Request): boolean {
-  const key = getConfiguredApiKey();
-  if (!key) {
-    return process.env.CARWASH_ALLOW_NO_KEY === "true";
-  }
-  const auth = req.headers.get("authorization");
-  const xKey = req.headers.get("x-api-key");
-  if (auth?.startsWith("Bearer ")) {
-    return auth.slice("Bearer ".length) === key;
-  }
-  return xKey === key;
-}
 
 function parseQuantity(body: unknown): number | null {
   if (!body || typeof body !== "object") return null;
@@ -36,11 +19,24 @@ function parseQuantity(body: unknown): number | null {
   return null;
 }
 
+/** Primary key `jcard`; legacy aliases `rfid`, `uid`, `cardId`. */
+function parseJcard(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const o = body as Record<string, unknown>;
+  const raw = o.jcard ?? o.rfid ?? o.uid ?? o.cardId;
+  if (typeof raw === "string" && raw.trim() !== "") return raw.trim();
+  if (typeof raw === "number" && Number.isFinite(raw)) return String(Math.trunc(raw));
+  return null;
+}
+
 /**
- * ESP32: POST JSON { "count": 1 } (or quantity / sales). Headers: Authorization: Bearer <CARWASH_API_KEY> or X-API-Key.
+ * POST JSON:
+ * - JCard: { "jcard": "<uid>", "count": 1 } (aliases: rfid, uid, cardId)
+ * - Coin slot: { "count": 1 } or { "count": 1, "source": "coin" }
+ * Headers: Authorization: Bearer <CARWASH_API_KEY> or X-API-Key.
  */
 export async function POST(req: Request) {
-  if (!isAuthorized(req)) {
+  if (!isCarwashAuthorized(req)) {
     return NextResponse.json(
       {
         error:
@@ -68,6 +64,25 @@ export async function POST(req: Request) {
     );
   }
 
-  const { id } = await recordSale(quantity);
-  return NextResponse.json({ ok: true, id, quantity });
+  const jcard = parseJcard(json);
+  const { id, createdAt, source } = await recordSale(quantity, jcard);
+
+  if (source === "jcard") {
+    return NextResponse.json({
+      ok: true,
+      id,
+      quantity,
+      source: "jcard",
+      jcard,
+      time: createdAt.toISOString(),
+    });
+  }
+
+  return NextResponse.json({
+    ok: true,
+    id,
+    quantity,
+    source: "coin",
+    time: createdAt.toISOString(),
+  });
 }
