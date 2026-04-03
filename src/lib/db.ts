@@ -11,7 +11,14 @@ function getMongoClientPromise(): Promise<MongoClient> {
   }
 
   if (!globalForMongo._mongoClientPromise) {
-    const client = new MongoClient(uri);
+    const client = new MongoClient(uri, {
+      serverApi: { version: "1", strict: true, deprecationErrors: true },
+      serverSelectionTimeoutMS: 10_000,
+      connectTimeoutMS: 10_000,
+      socketTimeoutMS: 20_000,
+      retryReads: true,
+      retryWrites: true,
+    });
     globalForMongo._mongoClientPromise = client.connect();
   }
   return globalForMongo._mongoClientPromise;
