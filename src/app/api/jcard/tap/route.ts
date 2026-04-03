@@ -1,4 +1,4 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { isCarwashAuthorized } from "@/lib/api-auth";
 import { tapJcardAndCharge } from "@/lib/customers";
 import { CURRENCY_CODE } from "@/lib/currency";
@@ -76,14 +76,11 @@ export async function POST(req: Request) {
       seconds: jcardTapDurationSeconds % 60,
     };
 
-    // Respond immediately for device UX; sales logging continues after response.
-    after(async () => {
-      try {
-        await recordRfidTapEvent(outcome.jcard, outcome.charged);
-      } catch (err) {
-        console.error("jcard/tap: failed to write sales_events", err);
-      }
-    });
+    try {
+      await recordRfidTapEvent(outcome.jcard, outcome.charged);
+    } catch (err) {
+      console.error("jcard/tap: failed to write sales_events", err);
+    }
 
     return NextResponse.json({
       ok: true,
@@ -98,7 +95,7 @@ export async function POST(req: Request) {
       startWash: true,
       approved: true,
       washCreditPhp: outcome.charged,
-      salesEventLogged: "queued",
+      salesEventLogged: true,
     });
   }
 

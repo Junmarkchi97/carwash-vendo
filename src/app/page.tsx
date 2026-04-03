@@ -90,21 +90,23 @@ export default async function Home({ searchParams }: PageProps) {
   const sumJcard7Php = comparison.reduce((s, r) => s + r.jcard, 0);
 
   const summaryLine = (
-    <p className="mb-6 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
-      <span className="text-amber-400/90">Coin (last 7 days):</span>{" "}
-      <span className="font-semibold tabular-nums text-white">
-        {formatPeso(sumCoin7Php)}
-      </span>
-      <span className="mx-3 text-slate-600">·</span>
-      <span className="text-sky-300/90">JCard (last 7 days):</span>{" "}
-      <span className="font-semibold tabular-nums text-white">
-        {formatPeso(sumJcard7Php)}
-      </span>
-    </p>
+    <div className="contents">
+      <p className="mb-6 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
+        <span className="text-amber-400/90">Coin (last 7 days):</span>{" "}
+        <span className="font-semibold tabular-nums text-white">
+          {formatPeso(sumCoin7Php)}
+        </span>
+        <span className="mx-3 text-slate-600">·</span>
+        <span className="text-sky-300/90">JCard (last 7 days):</span>{" "}
+        <span className="font-semibold tabular-nums text-white">
+          {formatPeso(sumJcard7Php)}
+        </span>
+      </p>
+    </div>
   );
 
   const chartAndCustomers = (
-    <>
+    <div className="contents">
       <section className="mt-8 rounded-2xl border border-white/10 bg-white/3 p-6 backdrop-blur">
         <div className="mb-4">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
@@ -181,7 +183,7 @@ export default async function Home({ searchParams }: PageProps) {
           </ul>
         )}
       </section>
-    </>
+    </div>
   );
 
   return (

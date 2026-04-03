@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { isCarwashAuthorized } from "@/lib/api-auth";
 import { CURRENCY_CODE } from "@/lib/currency";
-import { recordSale } from "@/lib/sales";
+import { JcardBalanceDeductionError, recordSale } from "@/lib/sales";
 
 export const runtime = "nodejs";
 
@@ -18,6 +18,9 @@ function parseJcard(body: unknown): string | null {
 /**
  * POST JSON (one event per request):
  * - JCard: { "jcard": "<uid>" } (optional legacy keys ignored: count, quantity, sales)
+ *   — deducts the configured tap charge from `customers.balance` for that UID, then logs `sales_events`.
+ *   If a duplicate event exists within `JCARD_SALES_DEDUPE_MS` (e.g. after `POST /api/jcard/tap`), the
+ *   existing row is returned and balance is not deducted again.
  * - Coin: `{}` or any body without `jcard` / rfid aliases
  * Mongo `sales_events`: `createdAt`, `source`, `price`, optional `jcard` (+ `_id`).
  */
@@ -40,7 +43,33 @@ export async function POST(req: Request) {
   }
 
   const jcard = parseJcard(json);
-  const { id, createdAt, source, price } = await recordSale(jcard);
+
+  let sale: Awaited<ReturnType<typeof recordSale>>;
+  try {
+    sale = await recordSale(jcard, { deductJcardBalance: Boolean(jcard) });
+  } catch (e) {
+    if (e instanceof JcardBalanceDeductionError) {
+      if (e.code === "not_found") {
+        return NextResponse.json(
+          { ok: false, error: "Card not registered", jcard },
+          { status: 404 },
+        );
+      }
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Insufficient balance",
+          jcard,
+          balance: e.balance,
+          currency: CURRENCY_CODE,
+        },
+        { status: 402 },
+      );
+    }
+    throw e;
+  }
+
+  const { id, createdAt, source, price, balanceBefore, balanceAfter } = sale;
 
   if (source === "jcard") {
     return NextResponse.json({
@@ -51,6 +80,9 @@ export async function POST(req: Request) {
       price,
       currency: CURRENCY_CODE,
       time: createdAt.toISOString(),
+      ...(balanceBefore != null && balanceAfter != null
+        ? { balanceBefore, balanceAfter }
+        : {}),
     });
   }
 

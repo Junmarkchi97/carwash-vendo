@@ -1,5 +1,5 @@
 import type { Collection, Document, Filter, ObjectId, OptionalUnlessRequiredId } from "mongodb";
-import { getCustomerDetailsByJcards } from "./customers";
+import { getCustomerDetailsByJcards, tapJcardAndCharge } from "./customers";
 import { getDb } from "./db";
 import { getJcardTapChargePesos } from "./settings";
 
@@ -320,7 +320,25 @@ export type SalesEventRow = {
 export type RecordSaleOptions = {
   /** Line total PHP (e.g. RFID tap charge). Overrides computed total. */
   price?: number;
+  /**
+   * JCard only: deduct the tap charge from `customers.balance` before inserting.
+   * Skipped when a recent duplicate row exists (e.g. already logged by `POST /api/jcard/tap`).
+   * Do not use with {@link recordRfidTapEvent} — tap path deducts separately.
+   */
+  deductJcardBalance?: boolean;
 };
+
+/** Thrown when {@link RecordSaleOptions.deductJcardBalance} is set and the customer row or balance blocks the sale. */
+export class JcardBalanceDeductionError extends Error {
+  constructor(
+    message: string,
+    public readonly code: "not_found" | "insufficient",
+    public readonly balance?: number,
+  ) {
+    super(message);
+    this.name = "JcardBalanceDeductionError";
+  }
+}
 
 /**
  * One successful RFID tap → `sales_events` row (`source: jcard`, `price`, `jcard`).
@@ -342,6 +360,8 @@ export async function recordSale(
   createdAt: Date;
   source: "jcard" | "coin";
   price: number;
+  balanceBefore?: number;
+  balanceAfter?: number;
 }> {
   const coll = await getSalesCollection();
   const createdAt = new Date();
@@ -392,6 +412,25 @@ export async function recordSale(
     }
   }
 
+  let balanceBefore: number | undefined;
+  let balanceAfter: number | undefined;
+  if (isJcard && trimmed && options?.deductJcardBalance) {
+    const outcome = await tapJcardAndCharge(trimmed);
+    if (!outcome.ok) {
+      if (outcome.error === "not_found") {
+        throw new JcardBalanceDeductionError("Card not registered", "not_found");
+      }
+      throw new JcardBalanceDeductionError(
+        "Insufficient balance",
+        "insufficient",
+        outcome.balance,
+      );
+    }
+    price = outcome.charged;
+    balanceBefore = outcome.balanceBefore;
+    balanceAfter = outcome.balanceAfter;
+  }
+
   const doc: SalesEventInsertDoc = {
     createdAt,
     source: isJcard ? "jcard" : "coin",
@@ -405,6 +444,9 @@ export async function recordSale(
     createdAt,
     source: doc.source,
     price,
+    ...(balanceBefore !== undefined && balanceAfter !== undefined
+      ? { balanceBefore, balanceAfter }
+      : {}),
   };
 }
 
