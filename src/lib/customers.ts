@@ -79,11 +79,15 @@ export async function tapJcardAndCharge(jcardRaw: string): Promise<TapOutcome> {
     [jcardKey]: jcard,
     [balanceKey]: { $gte: charge },
   };
+  const balanceOnlyProjection: Document = {
+    [balanceKey]: 1,
+    _id: 0,
+  };
 
   const result = await coll.findOneAndUpdate(
     filter,
     { $inc: { [balanceKey]: -charge } },
-    { returnDocument: "after" },
+    { returnDocument: "after", projection: balanceOnlyProjection },
   );
 
   if (result) {
@@ -98,7 +102,10 @@ export async function tapJcardAndCharge(jcardRaw: string): Promise<TapOutcome> {
     };
   }
 
-  const exists = await coll.findOne({ [jcardKey]: jcard });
+  const exists = await coll.findOne(
+    { [jcardKey]: jcard },
+    { projection: balanceOnlyProjection },
+  );
   if (!exists) {
     return { ok: false, error: "not_found" };
   }

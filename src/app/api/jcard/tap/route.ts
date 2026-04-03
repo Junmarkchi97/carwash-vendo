@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { isCarwashAuthorized } from "@/lib/api-auth";
 import { tapJcardAndCharge } from "@/lib/customers";
 import { CURRENCY_CODE } from "@/lib/currency";
@@ -36,19 +36,20 @@ export async function POST(req: Request) {
   const body = json && typeof json === "object" ? (json as Record<string, unknown>) : null;
   const raw = body?.jcard ?? body?.rfid ?? body?.uid ?? body?.cardId ?? body?.id;
   const jcard = typeof raw === "string" ? raw : typeof raw === "number" ? String(raw) : "";
+  const normalizedJcard = jcard.trim();
 
-  if (!jcard.trim()) {
+  if (!normalizedJcard) {
     return NextResponse.json(
       { error: 'Missing "jcard" (or rfid / uid / cardId) string in JSON body.' },
       { status: 400 },
     );
   }
 
-  const outcome = await tapJcardAndCharge(jcard);
+  const outcome = await tapJcardAndCharge(normalizedJcard);
 
   if (!outcome.ok && outcome.error === "not_found") {
     return NextResponse.json(
-      { ok: false, error: "Card not registered", jcard: jcard.trim() },
+      { ok: false, error: "Card not registered", jcard: normalizedJcard },
       { status: 404 },
     );
   }
@@ -58,7 +59,7 @@ export async function POST(req: Request) {
       {
         ok: false,
         error: "Insufficient balance",
-        jcard: jcard.trim(),
+        jcard: normalizedJcard,
         balance: outcome.balance,
         currency: CURRENCY_CODE,
       },
@@ -67,15 +68,14 @@ export async function POST(req: Request) {
   }
 
   if (outcome.ok) {
-    let saleId: string | undefined;
-    let salesEventError: string | undefined;
-    try {
-      const sale = await recordRfidTapEvent(outcome.jcard, outcome.charged);
-      saleId = sale.id;
-    } catch (err) {
-      salesEventError = err instanceof Error ? err.message : String(err);
-      console.error("jcard/tap: failed to write sales_events", err);
-    }
+    // Respond immediately for device UX; sales logging continues after response.
+    after(async () => {
+      try {
+        await recordRfidTapEvent(outcome.jcard, outcome.charged);
+      } catch (err) {
+        console.error("jcard/tap: failed to write sales_events", err);
+      }
+    });
 
     return NextResponse.json({
       ok: true,
@@ -85,8 +85,10 @@ export async function POST(req: Request) {
       balanceBefore: outcome.balanceBefore,
       balanceAfter: outcome.balanceAfter,
       currency: CURRENCY_CODE,
-      salesEventId: saleId ?? null,
-      ...(salesEventError ? { salesEventError } : {}),
+      startWash: true,
+      approved: true,
+      washCreditPhp: outcome.charged,
+      salesEventLogged: "queued",
     });
   }
 
