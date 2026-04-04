@@ -24,3 +24,60 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Dashboard: one-shot highlight animations (LiveRefresh updates) */
+@keyframes dashboard-recent-section-flash {
+  0% {
+    opacity: 1;
+    background: linear-gradient(
+      145deg,
+      rgb(56 189 248 / 0.22),
+      rgb(14 165 233 / 0.06)
+    );
+  }
+  100% {
+    opacity: 0;
+    background: transparent;
+  }
+}
+
+@keyframes dashboard-balance-flash {
+  0% {
+    background-color: rgb(16 185 129 / 0.35);
+    box-shadow: 0 0 14px rgb(16 185 129 / 0.35);
+    border-radius: 0.25rem;
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: none;
+  }
+}
+
+@keyframes dashboard-row-flash {
+  0% {
+    background-color: rgb(56 189 248 / 0.12);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.animate-dashboard-recent-section-flash {
+  animation: dashboard-recent-section-flash 2.1s ease-out forwards;
+}
+
+.animate-dashboard-balance-flash {
+  animation: dashboard-balance-flash 1.45s ease-out forwards;
+}
+
+.animate-dashboard-row-flash {
+  animation: dashboard-row-flash 1.6s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-dashboard-recent-section-flash,
+  .animate-dashboard-balance-flash,
+  .animate-dashboard-row-flash {
+    animation: none !important;
+  }
+}

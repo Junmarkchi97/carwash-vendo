@@ -1,3 +1,4 @@
+import { DashboardCustomersList } from "@/components/DashboardCustomersList";
 import { DashboardFilteredSections } from "@/components/DashboardFilteredSections";
 import type { DashboardStatsSerialized } from "@/components/DashboardFilteredSections";
 import { SalesComparisonChart } from "@/components/SalesComparisonChart";
@@ -85,7 +86,7 @@ export default async function Home({ searchParams }: PageProps) {
     dataError = "Data is temporarily unavailable (database connection failed).";
   }
 
-  /** `getCoinJcardDailyLast7` returns coin vs JCard gross PHP per day (`price` per event). */
+  /** `getCoinJcardDailyLast7` returns coin vs JCard PHP per day (`price` per event). */
   const sumCoin7Php = comparison.reduce((s, r) => s + r.coin, 0);
   const sumJcard7Php = comparison.reduce((s, r) => s + r.jcard, 0);
 
@@ -113,8 +114,8 @@ export default async function Home({ searchParams }: PageProps) {
             Coin vs JCard — last 7 days (₱)
           </h2>
           <p className="mt-1 text-xs text-slate-500">
-            Gross PHP per day from <code className="text-slate-400">price</code> per event. Not affected
-            by the filter above.
+            Per day from <code className="text-slate-400">price</code> per event. Not affected by the filter
+            above.
           </p>
         </div>
         {comparison.every((r) => r.coin === 0 && r.jcard === 0) ? (
@@ -131,57 +132,19 @@ export default async function Home({ searchParams }: PageProps) {
           Customers
         </h2>
         <p className="mt-1 text-xs text-slate-500">
-          Name, balance (PHP), JCard UID, joined / created date, and last JCard tap from{" "}
+          Name, balance, JCard UID, joined / created date, and last JCard tap from{" "}
           <code className="text-slate-400">customers</code> +{" "}
           <code className="text-slate-400">sales_events</code>.
         </p>
-        {customers.length === 0 ? (
-          <p className="mt-4 text-sm text-slate-500">No customers found.</p>
-        ) : (
-          <ul className="mt-4 divide-y divide-white/10">
-            {customers.map((c) => (
-              <li
-                key={c.jcard}
-                className="flex flex-col gap-2 py-3 text-sm first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
-              >
-                <div className="min-w-0 flex flex-col gap-0.5">
-                  <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-3">
-                    <span className="font-medium text-slate-200">
-                      {c.name ?? (
-                        <span className="text-slate-500">(no name)</span>
-                      )}
-                    </span>
-                    <span className="shrink-0 font-mono text-xs text-sky-300/90">{c.jcard}</span>
-                  </div>
-                  <div className="flex flex-col gap-0.5 text-xs text-slate-500">
-                    {c.joinedAt ? (
-                      <span>
-                        Joined {c.joinedAt.toLocaleDateString(undefined, { dateStyle: "medium" })}
-                      </span>
-                    ) : null}
-                    {(() => {
-                      const lastTap = lastJcardTapByJcard.get(c.jcard);
-                      return lastTap ? (
-                        <span>
-                          Last tap{" "}
-                          {lastTap.toLocaleString(undefined, {
-                            dateStyle: "medium",
-                            timeStyle: "short",
-                          })}
-                        </span>
-                      ) : (
-                        <span className="text-slate-600">No JCard taps recorded</span>
-                      );
-                    })()}
-                  </div>
-                </div>
-                <span className="shrink-0 tabular-nums text-emerald-200/90">
-                  {formatPeso(c.balancePhp)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+        <DashboardCustomersList
+          customers={customers.map((c) => ({
+            jcard: c.jcard,
+            name: c.name,
+            balancePhp: c.balancePhp,
+            joinedAt: c.joinedAt?.toISOString() ?? null,
+            lastTapIso: lastJcardTapByJcard.get(c.jcard)?.toISOString() ?? null,
+          }))}
+        />
       </section>
     </div>
   );
@@ -199,7 +162,7 @@ export default async function Home({ searchParams }: PageProps) {
               Sales dashboard
             </h1>
             <p className="mt-2 max-w-xl text-sm text-slate-400">
-              Amounts are gross revenue in Philippine peso (₱): coin slot ×{" "}
+              Amounts are in Philippine peso (₱): coin slot ×{" "}
               {formatPeso(coinSlotPhp)} per unit, JCard ×{" "}
               {formatPeso(jcardTapPhp)} per tap (from{" "}
               <Link

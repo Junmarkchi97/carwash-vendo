@@ -1,7 +1,8 @@
 "use client";
 
+import { AnimatedPesoAmount } from "@/components/AnimatedPesoAmount";
 import { formatPeso } from "@/lib/currency";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 /** Mirrors {@link parseSalesSourceFilter} in `@/lib/sales` — kept local to avoid bundling DB code on the client. */
 export type SalesSourceFilter = "all" | "coin" | "jcard";
@@ -41,25 +42,25 @@ function filterClass(active: boolean) {
 function statLabels(f: SalesSourceFilter) {
   if (f === "all") {
     return {
-      allTime: "All-time (gross PHP)",
-      today: "Today (gross PHP)",
-      week: "Last 7 days (gross PHP)",
-      recent: "Recent (gross PHP)",
+      allTime: "All-time",
+      today: "Today",
+      week: "Last 7 days",
+      recent: "Recent",
     };
   }
   if (f === "coin") {
     return {
-      allTime: "All-time — coin (PHP)",
-      today: "Today — coin (PHP)",
-      week: "Last 7 days — coin (PHP)",
-      recent: "Recent — coin (PHP)",
+      allTime: "All-time — coin",
+      today: "Today — coin",
+      week: "Last 7 days — coin",
+      recent: "Recent — coin",
     };
   }
   return {
-    allTime: "All-time — JCard (PHP)",
-    today: "Today — JCard (PHP)",
-    week: "Last 7 days — JCard (PHP)",
-    recent: "Recent — JCard (PHP)",
+    allTime: "All-time — JCard",
+    today: "Today — JCard",
+    week: "Last 7 days — JCard",
+    recent: "Recent — JCard",
   };
 }
 
@@ -78,7 +79,7 @@ function StatCard({
     >
       <p className="text-xs font-medium uppercase tracking-wide text-slate-400">{label}</p>
       <p className="mt-2 text-3xl font-semibold tabular-nums tracking-tight text-white">
-        {formatPeso(valuePhp)}
+        <AnimatedPesoAmount valuePhp={valuePhp} />
       </p>
     </div>
   );
@@ -104,6 +105,14 @@ export function DashboardFilteredSections({
   chartAndCustomersSlot,
 }: Props) {
   const [source, setSource] = useState<SalesSourceFilter>(initialSource);
+  const [recentSectionFlashKey, setRecentSectionFlashKey] = useState(0);
+  const [balanceFlashTick, setBalanceFlashTick] = useState<Record<string, number>>({});
+  const [topRowFlashId, setTopRowFlashId] = useState<string | null>(null);
+
+  const prevHadRowsBySourceRef = useRef<Partial<Record<SalesSourceFilter, boolean>>>({});
+  const prevBalanceByRowIdRef = useRef<Map<string, number | null>>(new Map());
+  const prevFirstRowIdRef = useRef<string | undefined>(undefined);
+  const didInitRecentRef = useRef(false);
 
   const applyFilter = useCallback((next: SalesSourceFilter) => {
     setSource(next);
@@ -122,6 +131,60 @@ export function DashboardFilteredSections({
 
   const stats = statsByFilter[source];
   const labels = statLabels(source);
+
+  useEffect(() => {
+    const hasRows = stats.recent.length > 0;
+    const prev = prevHadRowsBySourceRef.current[source];
+    if (prev !== undefined && !prev && hasRows) {
+      setRecentSectionFlashKey((k) => k + 1);
+    }
+    prevHadRowsBySourceRef.current[source] = hasRows;
+  }, [stats.recent, source]);
+
+  useEffect(() => {
+    if (!didInitRecentRef.current) {
+      didInitRecentRef.current = true;
+      const m = new Map<string, number | null>();
+      for (const row of stats.recent) m.set(row.id, row.customerBalancePhp);
+      prevBalanceByRowIdRef.current = m;
+      prevFirstRowIdRef.current = stats.recent[0]?.id;
+      return;
+    }
+
+    const prevBal = prevBalanceByRowIdRef.current;
+    const nextBal = new Map<string, number | null>();
+    for (const row of stats.recent) {
+      nextBal.set(row.id, row.customerBalancePhp);
+    }
+    setBalanceFlashTick((t) => {
+      let changed = false;
+      const out = { ...t };
+      for (const row of stats.recent) {
+        const oldBal = prevBal.get(row.id);
+        if (
+          row.customerBalancePhp != null &&
+          oldBal !== undefined &&
+          oldBal !== row.customerBalancePhp
+        ) {
+          out[row.id] = (out[row.id] ?? 0) + 1;
+          changed = true;
+        }
+      }
+      return changed ? out : t;
+    });
+    prevBalanceByRowIdRef.current = nextBal;
+
+    const firstId = stats.recent[0]?.id;
+    const prevFirst = prevFirstRowIdRef.current;
+    if (firstId && prevFirst !== undefined && firstId !== prevFirst) {
+      setTopRowFlashId(firstId);
+      const tid = window.setTimeout(() => setTopRowFlashId(null), 2000);
+      prevFirstRowIdRef.current = firstId;
+      return () => window.clearTimeout(tid);
+    }
+    if (firstId) prevFirstRowIdRef.current = firstId;
+    else if (stats.recent.length === 0) prevFirstRowIdRef.current = undefined;
+  }, [stats.recent]);
 
   return (
     <>
@@ -162,24 +225,35 @@ export function DashboardFilteredSections({
 
       {chartAndCustomersSlot}
 
-      <section className="mt-8 rounded-2xl border border-white/10 bg-white/3 p-6 backdrop-blur">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">{labels.recent}</h2>
-        {stats.recent.length === 0 ? (
-          <p className="mt-4 text-sm text-slate-500">
-            No sales in this view. Try another filter or post from your devices.
-          </p>
-        ) : (
-          <ul className="mt-4 divide-y divide-white/10">
-            {stats.recent.map((row) => {
-              const isJcard = row.source === "jcard";
-              const createdAt = new Date(row.createdAt);
-              const joinedAt = row.customerJoinedAt ? new Date(row.customerJoinedAt) : null;
-              const lastTap = row.customerLastJcardUseAt ? new Date(row.customerLastJcardUseAt) : null;
-              return (
-                <li
-                  key={row.id}
-                  className="flex flex-col gap-2 py-3 text-sm first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
-                >
+      <section className="relative mt-8 overflow-hidden rounded-2xl border border-white/10 bg-white/3 p-6 backdrop-blur">
+        {recentSectionFlashKey > 0 ? (
+          <div
+            key={recentSectionFlashKey}
+            className="pointer-events-none absolute inset-0 z-0 rounded-2xl animate-dashboard-recent-section-flash"
+            aria-hidden
+          />
+        ) : null}
+        <div className="relative z-10">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">{labels.recent}</h2>
+          {stats.recent.length === 0 ? (
+            <p className="mt-4 text-sm text-slate-500">
+              No sales in this view. Try another filter or post from your devices.
+            </p>
+          ) : (
+            <ul className="mt-4 divide-y divide-white/10">
+              {stats.recent.map((row) => {
+                const isJcard = row.source === "jcard";
+                const createdAt = new Date(row.createdAt);
+                const joinedAt = row.customerJoinedAt ? new Date(row.customerJoinedAt) : null;
+                const lastTap = row.customerLastJcardUseAt ? new Date(row.customerLastJcardUseAt) : null;
+                const balTick = balanceFlashTick[row.id] ?? 0;
+                return (
+                  <li
+                    key={row.id}
+                    className={`flex flex-col gap-2 py-3 text-sm first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4 ${
+                      topRowFlashId === row.id ? "animate-dashboard-row-flash rounded-lg -mx-2 px-2" : ""
+                    }`}
+                  >
                   <div className="min-w-0 flex flex-col gap-0.5">
                     <div className="flex flex-wrap items-center gap-2">
                       <span
@@ -205,7 +279,14 @@ export function DashboardFilteredSections({
                             {row.customerBalancePhp != null ? (
                               <>
                                 <span className="text-slate-500"> · </span>
-                                <span className="text-emerald-300/90">bal {formatPeso(row.customerBalancePhp)}</span>
+                                <span
+                                  key={`bal-${row.id}-${balTick}`}
+                                  className={`text-emerald-300/90 ${
+                                    balTick > 0 ? "animate-dashboard-balance-flash" : ""
+                                  }`}
+                                >
+                                  bal {formatPeso(row.customerBalancePhp)}
+                                </span>
                               </>
                             ) : null}
                             {joinedAt ? (
@@ -235,9 +316,10 @@ export function DashboardFilteredSections({
                   </div>
                 </li>
               );
-            })}
-          </ul>
-        )}
+              })}
+            </ul>
+          )}
+        </div>
       </section>
     </>
   );
